@@ -1,0 +1,146 @@
+---
+title: "Analiza Danych"
+author: "Agnieszka Gontarek"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    #number_sections: true
+    theme: united  
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, error=FALSE, message=FALSE)
+```
+
+``` {r libraries, echo=TRUE}
+library(data.table)
+library(dplyr)
+library(DT)
+library("Hmisc")
+library(ggplot2)
+library(plotly)
+library(tidyr)
+```
+
+``` {r funkcje}
+prettyTable <- function(table_df, round_columns=numeric(), round_digits=2) {
+    DT::datatable(table_df, style="bootstrap", filter = "none", rownames = FALSE, extensions = "Buttons", options = list(dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print'))) %>%
+    formatRound(round_columns, round_digits)
+}
+# ++++++++++++++++++++++++++++
+# flattenCorrMatrix
+# ++++++++++++++++++++++++++++
+# cormat : matrix of the correlation coefficients
+# pmat : matrix of the correlation p-values
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+```
+
+## Podsumowanie
+Analizowany zbiór posiada ponad 500 000 przykładów ligandów opisanych przez ponad 400 zmiennych. W dokonanej analizie zostały przedstawione wyniki dla 50-ciu najpopularniejszych klas ligandów. W prezentowanych wynikach można zauważyć, że największym problemem analityka jest dobre poznanie zbioru oraz jego własności. Poniższa analiza przedstawia niestety tylko ogólne charakterystyki dla zbioru, które mogą stanowić fundament do bardziej szczegółowej analizy.
+
+``` {r wczytanieDanych}
+cristal <- fread("all_summary.csv", sep=";")
+filter_cristal <- filter(cristal, ! res_name %in% c("UNK", "UNX", "UNL", "DUM", "N", "BLOB", "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE", "LEU", "LYS", "MET", "MSE", "PHE", "PRO", "SEC", "SER", "THR", "TRP", "TYR", "VAL", "DA", "DG", "DT", "DC", "DU", "A", "G", "T", "C", "U", "HOH", "H20", "WAT"))
+```
+
+## Rozmiar zbioru
+``` {r rozmiarZbioru}
+dim(filter_cristal)
+```
+
+## Podstawowe statystyki
+``` {r podstawoweStatystyki}
+summary(filter_cristal)
+```
+
+## 50 najpopularniejszych klas
+``` {r wyznaczenie50ResName}
+popular_res_name <- filter_cristal %>% select(res_name) %>% group_by(res_name) %>% summarise(count = n()) %>% arrange(desc(count)) %>% head(50)
+
+prettyTable(popular_res_name)
+
+filter_cristal_50 <- filter_cristal %>% filter(res_name %in% rep(popular_res_name$res_name))
+```
+
+## Korelacja między zmiennymi
+``` {r korelacja}
+
+cristal_column_means <- filter_cristal_50 %>% select(-(title), -(res_id:dict_atom_S_count)) %>% group_by(res_name) %>% summarise_all(mean) %>% select_if(~sum(!is.na(.)) > 0)
+
+corr_and_p <- rcorr(as.matrix(cristal_column_means[,c(-1)]))
+corr_and_p_summary <- flattenCorrMatrix(corr_and_p$r, corr_and_p$P)
+```
+
+Tabela przedstawia zmienne, których wartości korelacji są w zakresie <0.95, 1> lub <-0.95, 1>.
+``` {r korelacjaTab1}
+best1_cor <- corr_and_p_summary %>% filter (cor >= 0.95 | cor <= -0.95) %>% dplyr::arrange(desc(cor))
+prettyTable(best1_cor)
+```
+
+Tabela przedstawia zmienne, których wartości korelacji są w zakresie <0.9, 0.95) lub (-0.95, -0.9>.
+``` {r korelacjaTab2}
+best2_cor <- corr_and_p_summary %>% filter ((cor < 0.95 & cor >= 0.9) | (cor > -0.95 & cor <= -0.9)) %>% dplyr::arrange(desc(cor))
+prettyTable(best2_cor)
+```
+
+Tabela przedstawia zmienne, których wartości korelacji są w zakresie <0.85, 0.9) lub (-0.85, -0.9>.
+``` {r korelacjaTab3}
+best3_cor <- corr_and_p_summary %>% filter ((cor < 0.9 & cor >= 0.85) | (cor > -0.9 & cor <= -0.85)) %>% dplyr::arrange(desc(cor))
+prettyTable(best3_cor)
+```
+
+## Rozkład liczby atomów i elektronów
+
+``` {r rozkladAtomow}
+#rozklad atomow w podziale na klasy
+atoms <- filter_cristal_50 %>% select(res_name, local_res_atom_non_h_count)
+atom_plot <- atoms %>% ggplot(aes(x=local_res_atom_non_h_count)) + geom_density(aes(fill = res_name), alpha = 0.4) + ggtitle("Rozkład atomów z podziałem na poszczególne klasy") + ylab("Gęstość") + xlab("Liczba atomów")
+atom_plot <- ggplotly(atom_plot)
+atom_plot
+```
+
+``` {r rozkladElektronow}
+#rozklad elektronow w podziale na klasy
+electrons <- filter_cristal_50 %>% select(res_name, local_res_atom_non_h_electron_sum)
+electron_plot <- electrons %>% ggplot(aes(x=local_res_atom_non_h_electron_sum)) + geom_density(aes(fill = res_name), alpha = 0.4) + ggtitle("Rozkład elektronów z podziałem na poszczególne klasy") + ylab("Gęstość") + xlab("Liczba elektronów")
+electron_plot <- ggplotly(electron_plot)
+electron_plot
+```
+
+
+
+## 10 klas z największą niezgodnością liczby atomów
+``` {r roznicaAtomow}
+atom_10_diff <- filter_cristal_50 %>% group_by(res_name) %>% summarise(mean_of_local = mean(local_res_atom_non_h_count), mean_of_dict = mean(dict_atom_non_h_count), euclides_distance=dist(c(mean_of_local,mean_of_dict), method = "euclidean")) %>% arrange(desc(euclides_distance)) %>% head(10)
+
+prettyTable(atom_10_diff)
+```
+
+## 10 klas z największą niezgodnością liczby elektronów
+``` {r roznicaElektronow}
+elektron_10_diff <- filter_cristal_50 %>% group_by(res_name) %>% summarise(mean_of_local = mean(local_res_atom_non_h_electron_sum), mean_of_dict = mean(dict_atom_non_h_electron_sum), euclides_distance=dist(c(mean_of_local,mean_of_dict), method = "euclidean")) %>% arrange(desc(euclides_distance)) %>% head(10)
+
+prettyTable(elektron_10_diff)
+```
+
+
+## Rozkład wartości kolumn part_01*
+``` {r rozklady_part01}
+#cristal_part_01 <- filter_cristal_50 %>% select(starts_with("part_01"))
+#cristal_part_01 %>% gather() %>% ggplot(aes(value)) +   facet_wrap(~ key, ncol=4, scales = "free") + #geom_density() + ylab("Gestość") + xlab("Wartość")
+```
+
+## Eksperyment - przewidywanie liczby elektronów i atomów
+
+## Klasyfikator
